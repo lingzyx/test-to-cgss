@@ -211,6 +211,17 @@
   .warnings ul{margin:0; padding-left:18px; font-size:13px; color:#6b4f18;}
   .warnings li{margin-bottom:6px;}
 
+  .error-box{
+    margin-top:14px;
+    background:var(--brick-dim);
+    border:1px solid #e3c3bd;
+    color:#7a3327;
+    border-radius:var(--radius);
+    padding:14px 16px;
+    font-size:13.5px;
+    line-height:1.6;
+  }
+
   table.preview{
     width:100%;
     border-collapse:collapse;
@@ -314,6 +325,7 @@
         <p class="step-title">轉換</p>
         <p class="step-desc">處理完成後會列出摘要、欄位對應與需要人工確認的清單</p>
         <button class="btn btn-primary" id="btnConvert" disabled>開始轉換</button>
+        <div class="error-box" id="errorBox" style="display:none;"></div>
       </div>
     </div>
 
@@ -411,6 +423,62 @@ function fmtDate(d){
   return `${y}-${m}-${day}`;
 }
 
+function normHeader(s){
+  if(s===null||s===undefined) return '';
+  return String(s).replace(/[\s\u3000]+/g,'');
+}
+
+// TEST.xlsx 欄位比對規則：[欄位代號, 必須包含的關鍵字, 不能包含的關鍵字]
+const TEST_FIELD_RULES = [
+  ['SERIAL',        ['序號'],          []],
+  ['ORG_NAME',      ['申請單位'],       []],
+  ['ORG_ID',        ['統一編號'],       []],
+  ['ACT_NAME',      ['活動名稱'],       []],
+  ['START',         ['活動時間','起'],  []],
+  ['END',           ['活動時間','迄'],  []],
+  ['SELF',          ['自有款'],        []],
+  ['APPLIED',       ['補助金額'],       ['核定','他機關']],
+  ['CONFIRMED',     ['補助金額'],       ['申請','他機關']],
+  ['CONFIRM_DATE',  ['核定日期'],       []],
+  ['CGSS_FLAG',     ['CGSS'],          ['睦鄰']],
+];
+
+function buildTestColumnMap(rows, headerRowIdx=0){
+  const headers = (rows[headerRowIdx]||[]).map(normHeader);
+  const map = {};
+  const missing = [];
+  for(const [field, must, mustNot] of TEST_FIELD_RULES){
+    let found = -1;
+    for(let i=0;i<headers.length;i++){
+      const h = headers[i];
+      if(!h) continue;
+      if(must.every(k=>h.includes(k)) && !mustNot.some(k=>h.includes(k))){ found=i; break; }
+    }
+    if(found===-1) missing.push(field); else map[field]=found;
+  }
+  if(missing.length){
+    throw new Error('TEST.xlsx 表頭裡找不到以下必要欄位，請確認欄位名稱是否被更動過：'+missing.join('、'));
+  }
+  return map;
+}
+
+const CGSS_REQUIRED = ['CustomID','IsPublic','ApplyDate','Fund_Category','Fund_Name','Fund_Year',
+  'Organization_Name','Organization_ID','Organization_Type','CountyName','Subject','StartDate',
+  'EndDate','SelfProvidedAmount','Applied','ConfirmDate','ConfirmFund_Name','ConfirmFund_Year','ConfirmedAmount'];
+
+function buildCgssColumnMap(rows, maxScan=15){
+  let headerRowIdx = -1, headers = null;
+  for(let r=0; r<Math.min(maxScan, rows.length); r++){
+    if((rows[r]||[]).includes('Organization_Name')){ headerRowIdx=r; headers=rows[r]; break; }
+  }
+  if(headerRowIdx===-1) throw new Error('在 CGSS.xlsx 前面幾列找不到英文欄名列（例如 Organization_Name），請確認這是不是正確的 CGSS 範本檔。');
+  const map = {};
+  headers.forEach((h,i)=>{ if(h) map[String(h).trim()] = i; });
+  const missing = CGSS_REQUIRED.filter(f=>!(f in map));
+  if(missing.length) throw new Error('CGSS.xlsx 表頭裡找不到以下必要欄位，請確認範本是否為官方最新版本：'+missing.join('、'));
+  return {map, headerRowIdx};
+}
+
 function cell(rows, r, c){
   if(!rows[r]) return null;
   const v = rows[r][c];
@@ -418,6 +486,10 @@ function cell(rows, r, c){
 }
 
 function runConversion(){
+  const errBox = document.getElementById('errorBox');
+  errBox.style.display = 'none';
+  errBox.textContent = '';
+
   const cfg = {
     isPublic: document.getElementById('cfgIsPublic').value,
     fundCategory: document.getElementById('cfgFundCategory').value,
@@ -430,7 +502,14 @@ function runConversion(){
   const testWs = state.testWb.Sheets[state.testWb.SheetNames[0]];
   const rows = XLSX.utils.sheet_to_json(testWs, {header:1, raw:true, defval:null});
 
-  const T = {SERIAL:0, ORG_NAME:3, ORG_ID:4, ACT_NAME:5, START:7, END:8, SELF:10, APPLIED:11, CONFIRMED:12, CONFIRM_DATE:13, CGSS_FLAG:19};
+  let T;
+  try{
+    T = buildTestColumnMap(rows);
+  }catch(e){
+    errBox.textContent = '⚠️ ' + e.message;
+    errBox.style.display = 'block';
+    return;
+  }
 
   const warnings = [];
   const outRows = [];
@@ -493,38 +572,48 @@ function runConversion(){
   }
 
   // build output workbook from CGSS template
-  const outWb = XLSX.utils.book_new();
   const srcWsName = state.cgssWb.SheetNames[0];
   const srcWs = state.cgssWb.Sheets[srcWsName];
   const cgssRows = XLSX.utils.sheet_to_json(srcWs, {header:1, raw:true, defval:null});
 
-  const FIRST_ROW = 10; // 0-indexed row 10 == excel row 11
+  let C, headerRowIdx;
+  try{
+    ({map:C, headerRowIdx} = buildCgssColumnMap(cgssRows));
+  }catch(e){
+    errBox.textContent = '⚠️ ' + e.message;
+    errBox.style.display = 'block';
+    return;
+  }
+
+  const outWb = XLSX.utils.book_new();
+  const FIRST_ROW = headerRowIdx + 1; // 資料緊接在英文欄名列下一列
   const header = cgssRows.slice(0, FIRST_ROW);
+  const width = Math.max(...header.map(row=>(row||[]).length), 29);
 
   const dataAoa = outRows.map(row=>{
-    const arr = new Array(29).fill(null);
-    arr[0]=row.customId;
-    arr[3]=cfg.isPublic;
-    arr[4]=null; // ApplyDate — no source
-    arr[5]=cfg.fundCategory;
-    arr[6]=cfg.fundName;
-    arr[7]=row.fundYear;
-    arr[8]=row.orgName;
-    arr[9]=row.orgId;
-    arr[10]=cfg.orgType;
-    arr[11]=cfg.county;
-    arr[12]=row.subject;
-    arr[13]=row.startDate;
-    arr[14]=row.endDate;
-    arr[15]= row.selfAmount!==null ? String(row.selfAmount) : '';
-    arr[16]= row.appliedAmount!==null ? String(row.appliedAmount) : '';
+    const arr = new Array(width).fill(null);
+    arr[C.CustomID]=row.customId;
+    arr[C.IsPublic]=cfg.isPublic;
+    arr[C.ApplyDate]=null; // ApplyDate — 無來源
+    arr[C.Fund_Category]=cfg.fundCategory;
+    arr[C.Fund_Name]=cfg.fundName;
+    arr[C.Fund_Year]=row.fundYear;
+    arr[C.Organization_Name]=row.orgName;
+    arr[C.Organization_ID]=row.orgId;
+    arr[C.Organization_Type]=cfg.orgType;
+    arr[C.CountyName]=cfg.county;
+    arr[C.Subject]=row.subject;
+    arr[C.StartDate]=row.startDate;
+    arr[C.EndDate]=row.endDate;
+    arr[C.SelfProvidedAmount]= row.selfAmount!==null ? String(row.selfAmount) : '';
+    arr[C.Applied]= row.appliedAmount!==null ? String(row.appliedAmount) : '';
     if(row.confirmDate){
-      arr[25]=fmtDate(row.confirmDate);
-      arr[26]=cfg.fundName;
-      arr[27]=row.fundYear;
+      arr[C.ConfirmDate]=fmtDate(row.confirmDate);
+      arr[C.ConfirmFund_Name]=cfg.fundName;
+      arr[C.ConfirmFund_Year]=row.fundYear;
     }
     if(row.confirmedAmount!==null && row.confirmedAmount!==''){
-      arr[28]=row.confirmedAmount;
+      arr[C.ConfirmedAmount]=row.confirmedAmount;
     }
     return arr;
   });

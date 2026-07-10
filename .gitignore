@@ -1,0 +1,13 @@
+# 不要把金鑰、環境變數、真實案件資料傳到 GitHub
+.env
+*.key
+
+# 真實案件資料（含統一編號、聯絡電話等個資），只放程式碼上 GitHub 就好
+TEST.xlsx
+CGSS.xlsx
+output.xlsx
+output/
+*.pdf
+
+__pycache__/
+*.pyc
