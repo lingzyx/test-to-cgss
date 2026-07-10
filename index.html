@@ -1,0 +1,594 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>睦鄰案件 → CGSS 轉換工具</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Noto+Serif+TC:wght@500;700&family=Noto+Sans+TC:wght@400;500;700&family=Roboto+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+  :root{
+    --paper:#F3F5EF;
+    --surface:#FFFFFF;
+    --ink:#1E2A28;
+    --ink-soft:#54615D;
+    --line:#DADFD7;
+    --jade:#2F6F62;
+    --jade-dim:#E7EFEC;
+    --ochre:#B8862B;
+    --ochre-dim:#FBF2DF;
+    --brick:#A24B3E;
+    --brick-dim:#F7E9E7;
+    --radius:10px;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;}
+  body{
+    background:var(--paper);
+    color:var(--ink);
+    font-family:'Noto Sans TC', sans-serif;
+    line-height:1.6;
+    padding:48px 24px 96px;
+  }
+  .wrap{max-width:860px;margin:0 auto;}
+  .eyebrow{
+    font-family:'Roboto Mono', monospace;
+    font-size:12px;
+    letter-spacing:0.14em;
+    text-transform:uppercase;
+    color:var(--jade);
+    font-weight:500;
+    margin-bottom:10px;
+  }
+  h1{
+    font-family:'Noto Serif TC', serif;
+    font-weight:700;
+    font-size:clamp(26px,4vw,34px);
+    margin:0 0 8px;
+    letter-spacing:0.01em;
+  }
+  .lede{
+    color:var(--ink-soft);
+    font-size:15px;
+    max-width:56ch;
+    margin:0 0 8px;
+  }
+  .privacy{
+    display:inline-flex;
+    align-items:center;
+    gap:8px;
+    margin-top:18px;
+    font-size:13px;
+    color:var(--jade);
+    background:var(--jade-dim);
+    border:1px solid #cfe1db;
+    padding:8px 14px;
+    border-radius:999px;
+  }
+  .privacy svg{flex-shrink:0;}
+
+  .steps{margin-top:44px;}
+  .step{
+    display:grid;
+    grid-template-columns:40px 1fr;
+    gap:20px;
+    padding:28px 0;
+    border-top:1px solid var(--line);
+  }
+  .step:first-child{border-top:none;}
+  .step-num{
+    font-family:'Roboto Mono', monospace;
+    font-size:13px;
+    color:var(--ink-soft);
+    padding-top:4px;
+  }
+  .step-num span{
+    display:inline-flex;
+    width:26px;height:26px;
+    border:1px solid var(--line);
+    border-radius:50%;
+    align-items:center;justify-content:center;
+    background:var(--surface);
+  }
+  .step-title{
+    font-weight:700;
+    font-size:16px;
+    margin:0 0 4px;
+  }
+  .step-desc{
+    color:var(--ink-soft);
+    font-size:13.5px;
+    margin:0 0 16px;
+  }
+
+  .drop{
+    border:1.5px dashed var(--line);
+    border-radius:var(--radius);
+    background:var(--surface);
+    padding:20px;
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    gap:16px;
+    cursor:pointer;
+    transition:border-color .15s, background .15s;
+  }
+  .drop:hover{border-color:var(--jade);}
+  .drop.has-file{border-style:solid; border-color:var(--jade); background:var(--jade-dim);}
+  .drop-label{font-size:14px;color:var(--ink-soft);}
+  .drop-label b{color:var(--ink); font-weight:700;}
+  .drop-file{font-family:'Roboto Mono', monospace; font-size:12.5px; color:var(--jade); word-break:break-all;}
+  .drop input{display:none;}
+  .drop-icon{
+    width:34px;height:34px;flex-shrink:0;
+    border-radius:8px;
+    background:var(--jade-dim);
+    display:flex;align-items:center;justify-content:center;
+  }
+  .two-col{display:grid; grid-template-columns:1fr 1fr; gap:14px;}
+  @media (max-width:620px){.two-col{grid-template-columns:1fr;}}
+
+  .config-grid{
+    display:grid;
+    grid-template-columns:1fr 1fr;
+    gap:12px 16px;
+  }
+  @media (max-width:620px){.config-grid{grid-template-columns:1fr;}}
+  .field{display:flex; flex-direction:column; gap:6px;}
+  .field label{font-size:12.5px; color:var(--ink-soft); font-weight:500;}
+  .field input{
+    font-family:'Noto Sans TC', sans-serif;
+    font-size:14px;
+    padding:9px 11px;
+    border:1px solid var(--line);
+    border-radius:7px;
+    background:var(--surface);
+    color:var(--ink);
+  }
+  .field input:focus{outline:2px solid var(--jade); outline-offset:1px; border-color:var(--jade);}
+
+  .btn{
+    font-family:'Noto Sans TC', sans-serif;
+    font-weight:700;
+    font-size:15px;
+    padding:13px 26px;
+    border-radius:8px;
+    border:none;
+    cursor:pointer;
+    transition:transform .1s, opacity .15s;
+  }
+  .btn:active{transform:scale(0.98);}
+  .btn:disabled{opacity:0.4; cursor:not-allowed;}
+  .btn-primary{background:var(--jade); color:#fff;}
+  .btn-primary:hover:not(:disabled){background:#285f53;}
+  .btn-ghost{background:transparent; color:var(--jade); border:1px solid var(--jade);}
+  .btn-ghost:hover:not(:disabled){background:var(--jade-dim);}
+
+  .result{display:none;}
+  .result.show{display:block;}
+  .stat-row{display:flex; gap:14px; flex-wrap:wrap; margin-bottom:18px;}
+  .stat{
+    background:var(--surface);
+    border:1px solid var(--line);
+    border-radius:var(--radius);
+    padding:14px 18px;
+    min-width:120px;
+  }
+  .stat .n{font-family:'Noto Serif TC',serif; font-size:26px; font-weight:700;}
+  .stat .l{font-size:12px; color:var(--ink-soft); margin-top:2px;}
+  .stat.warn .n{color:var(--ochre);}
+  .stat.ok .n{color:var(--jade);}
+
+  .mapping{
+    font-family:'Roboto Mono', monospace;
+    font-size:12px;
+    background:var(--surface);
+    border:1px solid var(--line);
+    border-radius:var(--radius);
+    padding:16px;
+    display:grid;
+    grid-template-columns:1fr;
+    gap:6px;
+    margin-bottom:18px;
+    max-height:180px;
+    overflow-y:auto;
+  }
+  .mapping .row{display:flex; gap:10px; align-items:center; color:var(--ink-soft);}
+  .mapping .arrow{color:var(--jade);}
+  .mapping .dst{color:var(--ink); font-weight:500;}
+
+  .warnings{
+    background:var(--ochre-dim);
+    border:1px solid #ecd9ae;
+    border-radius:var(--radius);
+    padding:16px 18px;
+    margin-bottom:20px;
+    max-height:260px;
+    overflow-y:auto;
+  }
+  .warnings h3{margin:0 0 10px; font-size:13px; color:#8a641d; font-family:'Roboto Mono',monospace; letter-spacing:0.05em;}
+  .warnings ul{margin:0; padding-left:18px; font-size:13px; color:#6b4f18;}
+  .warnings li{margin-bottom:6px;}
+
+  table.preview{
+    width:100%;
+    border-collapse:collapse;
+    font-size:12.5px;
+    font-family:'Roboto Mono', monospace;
+    background:var(--surface);
+    border:1px solid var(--line);
+    border-radius:var(--radius);
+    overflow:hidden;
+    margin-bottom:22px;
+  }
+  table.preview th, table.preview td{
+    padding:8px 10px;
+    border-bottom:1px solid var(--line);
+    text-align:left;
+    white-space:nowrap;
+  }
+  table.preview th{background:var(--jade-dim); color:var(--jade); font-weight:700; font-size:11px; text-transform:uppercase; letter-spacing:0.04em;}
+  table.preview tr:last-child td{border-bottom:none;}
+
+  .footnote{font-size:12px; color:var(--ink-soft); margin-top:36px; padding-top:20px; border-top:1px solid var(--line);}
+  .footnote a{color:var(--jade);}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="eyebrow">南投縣 · 睦鄰組織補助案件</div>
+  <h1>TEST → CGSS 批次上傳轉換工具</h1>
+  <p class="lede">上傳自建的案件資料與 CGSS 範本，自動對應欄位、轉換民國日期，並列出需要人工確認的項目。</p>
+  <div class="privacy">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M12 2L4 6V11C4 16 7 20.5 12 22C17 20.5 20 16 20 11V6L12 2Z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
+    全程在您的瀏覽器內處理，檔案不會上傳到任何伺服器
+  </div>
+
+  <div class="steps">
+
+    <div class="step">
+      <div class="step-num"><span>1</span></div>
+      <div>
+        <p class="step-title">上傳兩個檔案</p>
+        <p class="step-desc">TEST.xlsx（案件來源資料）與 CGSS.xlsx（決定輸出欄位與版型的範本）</p>
+        <div class="two-col">
+          <label class="drop" id="dropTest">
+            <div>
+              <div class="drop-label"><b>TEST.xlsx</b></div>
+              <div class="drop-file" id="fileNameTest">點擊或拖曳檔案至此</div>
+            </div>
+            <div class="drop-icon">📄</div>
+            <input type="file" id="inputTest" accept=".xlsx">
+          </label>
+          <label class="drop" id="dropCgss">
+            <div>
+              <div class="drop-label"><b>CGSS.xlsx</b></div>
+              <div class="drop-file" id="fileNameCgss">點擊或拖曳檔案至此</div>
+            </div>
+            <div class="drop-icon">📋</div>
+            <input type="file" id="inputCgss" accept=".xlsx">
+          </label>
+        </div>
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="step-num"><span>2</span></div>
+      <div>
+        <p class="step-title">確認固定欄位</p>
+        <p class="step-desc">這些欄位在 TEST.xlsx 裡沒有對應資料，換年度或換計畫時可以直接在這裡修改</p>
+        <div class="config-grid">
+          <div class="field">
+            <label for="cfgIsPublic">開放查詢註記 IsPublic</label>
+            <input type="text" id="cfgIsPublic" value="是">
+          </div>
+          <div class="field">
+            <label for="cfgFundCategory">經費類別 Fund_Category</label>
+            <input type="text" id="cfgFundCategory" value="公務預算">
+          </div>
+          <div class="field">
+            <label for="cfgFundName">計畫名稱 Fund_Name</label>
+            <input type="text" id="cfgFundName" value="U200教育文化">
+          </div>
+          <div class="field">
+            <label for="cfgOrgType">團體類型 Organization_Type</label>
+            <input type="text" id="cfgOrgType" value="扣繳編號(統一編號)">
+          </div>
+          <div class="field">
+            <label for="cfgCounty">所屬地區 CountyName</label>
+            <input type="text" id="cfgCounty" value="南投縣">
+          </div>
+          <div class="field">
+            <label for="cfgOnlyFlagged">只轉換 CGSS 欄有標記 v 的列</label>
+            <input type="text" id="cfgOnlyFlagged" value="是（否則請輸入：否）">
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="step-num"><span>3</span></div>
+      <div>
+        <p class="step-title">轉換</p>
+        <p class="step-desc">處理完成後會列出摘要、欄位對應與需要人工確認的清單</p>
+        <button class="btn btn-primary" id="btnConvert" disabled>開始轉換</button>
+      </div>
+    </div>
+
+    <div class="step result" id="resultStep">
+      <div class="step-num"><span>4</span></div>
+      <div>
+        <p class="step-title">確認結果並下載</p>
+        <div class="stat-row">
+          <div class="stat ok"><div class="n" id="statCount">0</div><div class="l">筆已轉換</div></div>
+          <div class="stat"><div class="n" id="statSkipped">0</div><div class="l">筆已略過</div></div>
+          <div class="stat warn"><div class="n" id="statWarn">0</div><div class="l">項待確認</div></div>
+        </div>
+
+        <div class="mapping" id="mappingBox"></div>
+
+        <div class="warnings" id="warnBox" style="display:none;">
+          <h3>需要人工確認</h3>
+          <ul id="warnList"></ul>
+        </div>
+
+        <table class="preview" id="previewTable" style="display:none;"></table>
+
+        <button class="btn btn-ghost" id="btnDownload">下載 CGSS 格式檔案</button>
+      </div>
+    </div>
+
+  </div>
+
+  <p class="footnote">
+    欄位對應邏輯：CustomID←序號、Fund_Year←序號年度前綴、Organization_ID 自動補齊 8 碼、
+    StartDate/EndDate/ConfirmDate 自動將民國日期轉換為西元。
+    ApplyDate（申請日期）目前 TEST.xlsx 沒有來源欄位，一律留白，需上傳前手動補齊。
+  </p>
+</div>
+
+<script>
+const state = { testWb:null, cgssWb:null, outputWb:null };
+
+function bindDrop(dropId, inputId, nameId, key){
+  const drop = document.getElementById(dropId);
+  const input = document.getElementById(inputId);
+  const nameEl = document.getElementById(nameId);
+  drop.addEventListener('click', ()=>input.click());
+  drop.addEventListener('dragover', e=>{e.preventDefault(); drop.style.borderColor='var(--jade)';});
+  drop.addEventListener('drop', e=>{
+    e.preventDefault();
+    if(e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0], key, drop, nameEl);
+  });
+  input.addEventListener('change', e=>{
+    if(e.target.files.length) handleFile(e.target.files[0], key, drop, nameEl);
+  });
+}
+
+function handleFile(file, key, dropEl, nameEl){
+  const reader = new FileReader();
+  reader.onload = (e)=>{
+    const data = new Uint8Array(e.target.result);
+    const wb = XLSX.read(data, {type:'array', cellDates:true});
+    if(key==='test') state.testWb = wb; else state.cgssWb = wb;
+    dropEl.classList.add('has-file');
+    nameEl.textContent = file.name;
+    document.getElementById('btnConvert').disabled = !(state.testWb && state.cgssWb);
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+bindDrop('dropTest','inputTest','fileNameTest','test');
+bindDrop('dropCgss','inputCgss','fileNameCgss','cgss');
+
+// ---- conversion logic (mirrors convert.py) ----
+
+function parseRocDate(value){
+  if(value === null || value === undefined || value === '') return null;
+  if(value instanceof Date) return value;
+  const s = String(value).trim();
+  if(!s) return null;
+  const m = s.match(/(\d{2,3})\s*[\/.\u5e74]\s*(\d{1,2})\s*[\/.\u6708]\s*(\d{1,2})/);
+  if(!m) return null;
+  const rocYear = parseInt(m[1],10), month = parseInt(m[2],10), day = parseInt(m[3],10);
+  const d = new Date(rocYear+1911, month-1, day);
+  if(isNaN(d.getTime())) return null;
+  return d;
+}
+
+function normalizeOrgId(value){
+  if(value === null || value === undefined) return '';
+  let s = String(value).trim();
+  if(/^\d+$/.test(s)) s = s.padStart(8,'0');
+  return s;
+}
+
+function fmtDate(d){
+  if(!d) return '';
+  const y=d.getFullYear(), m=String(d.getMonth()+1).padStart(2,'0'), day=String(d.getDate()).padStart(2,'0');
+  return `${y}-${m}-${day}`;
+}
+
+function cell(rows, r, c){
+  if(!rows[r]) return null;
+  const v = rows[r][c];
+  return (v === undefined) ? null : v;
+}
+
+function runConversion(){
+  const cfg = {
+    isPublic: document.getElementById('cfgIsPublic').value,
+    fundCategory: document.getElementById('cfgFundCategory').value,
+    fundName: document.getElementById('cfgFundName').value,
+    orgType: document.getElementById('cfgOrgType').value,
+    county: document.getElementById('cfgCounty').value,
+    onlyFlagged: !document.getElementById('cfgOnlyFlagged').value.trim().startsWith('否'),
+  };
+
+  const testWs = state.testWb.Sheets[state.testWb.SheetNames[0]];
+  const rows = XLSX.utils.sheet_to_json(testWs, {header:1, raw:true, defval:null});
+
+  const T = {SERIAL:0, ORG_NAME:3, ORG_ID:4, ACT_NAME:5, START:7, END:8, SELF:10, APPLIED:11, CONFIRMED:12, CONFIRM_DATE:13, CGSS_FLAG:19};
+
+  const warnings = [];
+  const outRows = [];
+  let skipped = 0;
+  let r = 1; // row index 1 == excel row 2
+  let consecutiveBlank = 0;
+
+  while(r < rows.length){
+    const serial = cell(rows, r, T.SERIAL);
+    if(serial === null){
+      consecutiveBlank++;
+      if(consecutiveBlank >= 3) break;
+      r++; continue;
+    }
+    consecutiveBlank = 0;
+    const excelRow = r+1;
+
+    const flag = cell(rows, r, T.CGSS_FLAG);
+    const flagged = flag ? String(flag).trim().toLowerCase()==='v' : false;
+    if(cfg.onlyFlagged && !flagged){
+      warnings.push(`第${excelRow}列（序號 ${serial}）CGSS 欄未標記 v，已略過未輸出。`);
+      skipped++;
+      r++; continue;
+    }
+
+    const serialStr = String(serial).trim();
+    const fundYearMatch = serialStr.match(/^(\d+)-/);
+    const fundYear = fundYearMatch ? fundYearMatch[1] : '';
+
+    let startDate = parseRocDate(cell(rows, r, T.START));
+    let endDate = parseRocDate(cell(rows, r, T.END));
+    if(endDate===null && startDate!==null){
+      warnings.push(`第${excelRow}列（序號 ${serial}）活動時間(迄) 無法解析或含多個日期，已暫用活動時間(起) ${fmtDate(startDate)} 作為結束日，請人工確認。`);
+      endDate = startDate;
+    }
+    if(startDate===null){
+      warnings.push(`第${excelRow}列（序號 ${serial}）活動時間(起) 無法解析，StartDate 留白。`);
+    }
+
+    const confirmDate = parseRocDate(cell(rows, r, T.CONFIRM_DATE));
+    const confirmedAmt = cell(rows, r, T.CONFIRMED);
+    if(confirmedAmt !== null && confirmedAmt !== '' && confirmDate===null){
+      warnings.push(`第${excelRow}列（序號 ${serial}）已有核定補助金額但無核定日期，ConfirmDate 留白，請人工補齊。`);
+    }
+
+    warnings.push(`第${excelRow}列（序號 ${serial}）ApplyDate（*申請日期，必填）在 TEST.xlsx 中無對應欄位，已留白，請人工補齊。`);
+
+    outRows.push({
+      customId: serialStr,
+      fundYear,
+      orgName: String(cell(rows,r,T.ORG_NAME) ?? '').trim(),
+      orgId: normalizeOrgId(cell(rows,r,T.ORG_ID)),
+      subject: String(cell(rows,r,T.ACT_NAME) ?? '').trim(),
+      startDate, endDate,
+      selfAmount: cell(rows,r,T.SELF),
+      appliedAmount: cell(rows,r,T.APPLIED),
+      confirmDate, confirmedAmount: confirmedAmt,
+    });
+    r++;
+  }
+
+  // build output workbook from CGSS template
+  const outWb = XLSX.utils.book_new();
+  const srcWsName = state.cgssWb.SheetNames[0];
+  const srcWs = state.cgssWb.Sheets[srcWsName];
+  const cgssRows = XLSX.utils.sheet_to_json(srcWs, {header:1, raw:true, defval:null});
+
+  const FIRST_ROW = 10; // 0-indexed row 10 == excel row 11
+  const header = cgssRows.slice(0, FIRST_ROW);
+
+  const dataAoa = outRows.map(row=>{
+    const arr = new Array(29).fill(null);
+    arr[0]=row.customId;
+    arr[3]=cfg.isPublic;
+    arr[4]=null; // ApplyDate — no source
+    arr[5]=cfg.fundCategory;
+    arr[6]=cfg.fundName;
+    arr[7]=row.fundYear;
+    arr[8]=row.orgName;
+    arr[9]=row.orgId;
+    arr[10]=cfg.orgType;
+    arr[11]=cfg.county;
+    arr[12]=row.subject;
+    arr[13]=row.startDate;
+    arr[14]=row.endDate;
+    arr[15]= row.selfAmount!==null ? String(row.selfAmount) : '';
+    arr[16]= row.appliedAmount!==null ? String(row.appliedAmount) : '';
+    if(row.confirmDate){
+      arr[25]=fmtDate(row.confirmDate);
+      arr[26]=cfg.fundName;
+      arr[27]=row.fundYear;
+    }
+    if(row.confirmedAmount!==null && row.confirmedAmount!==''){
+      arr[28]=row.confirmedAmount;
+    }
+    return arr;
+  });
+
+  const finalAoa = header.concat(dataAoa);
+  const outWs = XLSX.utils.aoa_to_sheet(finalAoa, {cellDates:true});
+  outWs['!cols'] = srcWs['!cols'];
+  XLSX.utils.book_append_sheet(outWb, outWs, srcWsName);
+  state.outputWb = outWb;
+
+  renderResults(outRows, warnings, skipped);
+}
+
+function renderResults(outRows, warnings, skipped){
+  document.getElementById('resultStep').classList.add('show');
+  document.getElementById('statCount').textContent = outRows.length;
+  document.getElementById('statSkipped').textContent = skipped;
+  document.getElementById('statWarn').textContent = warnings.length;
+
+  const mappingBox = document.getElementById('mappingBox');
+  const pairs = [
+    ['序號','CustomID'],['申請單位','Organization_Name'],['統一編號','Organization_ID (補零至8碼)'],
+    ['活動名稱','Subject'],['活動時間(起/迄)','StartDate / EndDate'],['自有款','SelfProvidedAmount'],
+    ['申請補助金額','Applied'],['核定日期','ConfirmDate'],['核定補助金額','ConfirmedAmount'],
+    ['（無來源）','ApplyDate — 需人工填寫'],
+  ];
+  mappingBox.innerHTML = pairs.map(p=>`<div class="row"><span>${p[0]}</span><span class="arrow">→</span><span class="dst">${p[1]}</span></div>`).join('');
+
+  const warnBox = document.getElementById('warnBox');
+  const warnList = document.getElementById('warnList');
+  if(warnings.length){
+    warnBox.style.display='block';
+    warnList.innerHTML = warnings.slice(0,200).map(w=>`<li>${w}</li>`).join('');
+  } else {
+    warnBox.style.display='none';
+  }
+
+  const table = document.getElementById('previewTable');
+  if(outRows.length){
+    table.style.display='table';
+    const head = ['CustomID','Organization_Name','Subject','StartDate','ConfirmedAmount'];
+    let html = '<tr>'+head.map(h=>`<th>${h}</th>`).join('')+'</tr>';
+    outRows.slice(0,8).forEach(r=>{
+      html += `<tr><td>${r.customId}</td><td>${r.orgName}</td><td>${(r.subject||'').slice(0,16)}</td><td>${fmtDate(r.startDate)}</td><td>${r.confirmedAmount ?? ''}</td></tr>`;
+    });
+    table.innerHTML = html;
+  }
+}
+
+document.getElementById('btnConvert').addEventListener('click', runConversion);
+
+document.getElementById('btnDownload').addEventListener('click', ()=>{
+  if(!state.outputWb) return;
+  const wbout = XLSX.write(state.outputWb, {bookType:'xlsx', type:'array'});
+  const blob = new Blob([wbout], {type:'application/octet-stream'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'CGSS_轉換結果.xlsx';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+});
+</script>
+</body>
+</html>
