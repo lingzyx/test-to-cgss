@@ -311,10 +311,6 @@
             <label for="cfgCounty">所屬地區 CountyName</label>
             <input type="text" id="cfgCounty" value="南投縣">
           </div>
-          <div class="field">
-            <label for="cfgOnlyFlagged">只轉換 CGSS 欄有標記 v 的列</label>
-            <input type="text" id="cfgOnlyFlagged" value="是（否則請輸入：否）">
-          </div>
         </div>
       </div>
     </div>
@@ -428,33 +424,39 @@ function normHeader(s){
   return String(s).replace(/[\s\u3000]+/g,'');
 }
 
-// TEST.xlsx 欄位比對規則：[欄位代號, 必須包含的關鍵字, 不能包含的關鍵字]
+// TEST.xlsx 欄位比對規則：[欄位代號, [[必須包含的關鍵字, 不能包含的關鍵字], 其他寫法...], 是否必要]
 const TEST_FIELD_RULES = [
-  ['SERIAL',        ['序號'],          []],
-  ['ORG_NAME',      ['申請單位'],       []],
-  ['ORG_ID',        ['統一編號'],       []],
-  ['ACT_NAME',      ['活動名稱'],       []],
-  ['START',         ['活動時間','起'],  []],
-  ['END',           ['活動時間','迄'],  []],
-  ['SELF',          ['自有款'],        []],
-  ['APPLIED',       ['補助金額'],       ['核定','他機關']],
-  ['CONFIRMED',     ['補助金額'],       ['申請','他機關']],
-  ['CONFIRM_DATE',  ['核定日期'],       []],
-  ['CGSS_FLAG',     ['CGSS'],          ['睦鄰']],
+  ['SERIAL',        [[['序號'],[]]],                          true],
+  ['ORG_NAME',      [[['申請單位'],[]]],                       true],
+  ['ORG_ID',        [[['統一編號'],[]]],                       true],
+  ['ACT_NAME',      [[['活動名稱'],[]]],                       true],
+  ['START',         [[['活動時間','起'],[]]],                  true],
+  ['END',           [[['活動時間','迄'],[]]],                  true],
+  ['SELF',          [[['自有款'],[]]],                         true],
+  ['APPLIED',       [[['補助金額'],['核定','他機關']]],         true],
+  ['CONFIRMED',     [[['補助金額'],['申請','他機關']]],         true],
+  ['CONFIRM_DATE',  [[['核定日期'],[]], [['核准日期'],[]]],     true],
+  // CGSS 欄意義是「已經轉過了」，標記 v 的列要跳過；欄位不存在就視為全部都還沒轉
+  ['CGSS_FLAG',     [[['CGSS'],['睦鄰']]],                     false],
+  // 其他補助單位是選用欄位，通常只有機關名稱、沒有金額
+  ['OTHER_AGENCIES',[[['其他補助單位'],[]], [['其他補助機關'],[]]], false],
 ];
 
 function buildTestColumnMap(rows, headerRowIdx=0){
   const headers = (rows[headerRowIdx]||[]).map(normHeader);
   const map = {};
   const missing = [];
-  for(const [field, must, mustNot] of TEST_FIELD_RULES){
+  for(const [field, alternatives, required] of TEST_FIELD_RULES){
     let found = -1;
-    for(let i=0;i<headers.length;i++){
-      const h = headers[i];
-      if(!h) continue;
-      if(must.every(k=>h.includes(k)) && !mustNot.some(k=>h.includes(k))){ found=i; break; }
+    for(const [must, mustNot] of alternatives){
+      for(let i=0;i<headers.length;i++){
+        const h = headers[i];
+        if(!h) continue;
+        if(must.every(k=>h.includes(k)) && !mustNot.some(k=>h.includes(k))){ found=i; break; }
+      }
+      if(found!==-1) break;
     }
-    if(found===-1) missing.push(field); else map[field]=found;
+    if(found===-1){ if(required) missing.push(field); } else map[field]=found;
   }
   if(missing.length){
     throw new Error('TEST.xlsx 表頭裡找不到以下必要欄位，請確認欄位名稱是否被更動過：'+missing.join('、'));
@@ -467,9 +469,11 @@ const CGSS_REQUIRED = ['CustomID','IsPublic','ApplyDate','Fund_Category','Fund_N
   'EndDate','SelfProvidedAmount','Applied','ConfirmDate','ConfirmFund_Name','ConfirmFund_Year','ConfirmedAmount'];
 
 function buildCgssColumnMap(rows, maxScan=15){
+  // 官方範本常把英文欄名列重複兩次（一次在檔案上方說明、一次緊接在資料正上方），
+  // 要取「掃描範圍內最後一次出現」的那一列，避免把範本中間的操作說明覆蓋掉。
   let headerRowIdx = -1, headers = null;
   for(let r=0; r<Math.min(maxScan, rows.length); r++){
-    if((rows[r]||[]).includes('Organization_Name')){ headerRowIdx=r; headers=rows[r]; break; }
+    if((rows[r]||[]).includes('Organization_Name')){ headerRowIdx=r; headers=rows[r]; }
   }
   if(headerRowIdx===-1) throw new Error('在 CGSS.xlsx 前面幾列找不到英文欄名列（例如 Organization_Name），請確認這是不是正確的 CGSS 範本檔。');
   const map = {};
@@ -496,7 +500,6 @@ function runConversion(){
     fundName: document.getElementById('cfgFundName').value,
     orgType: document.getElementById('cfgOrgType').value,
     county: document.getElementById('cfgCounty').value,
-    onlyFlagged: !document.getElementById('cfgOnlyFlagged').value.trim().startsWith('否'),
   };
 
   const testWs = state.testWb.Sheets[state.testWb.SheetNames[0]];
@@ -517,6 +520,9 @@ function runConversion(){
   let r = 1; // row index 1 == excel row 2
   let consecutiveBlank = 0;
 
+  const hasCgssFlag = 'CGSS_FLAG' in T;
+  const hasOtherAgencies = 'OTHER_AGENCIES' in T;
+
   while(r < rows.length){
     const serial = cell(rows, r, T.SERIAL);
     if(serial === null){
@@ -527,12 +533,14 @@ function runConversion(){
     consecutiveBlank = 0;
     const excelRow = r+1;
 
-    const flag = cell(rows, r, T.CGSS_FLAG);
-    const flagged = flag ? String(flag).trim().toLowerCase()==='v' : false;
-    if(cfg.onlyFlagged && !flagged){
-      warnings.push(`第${excelRow}列（序號 ${serial}）CGSS 欄未標記 v，已略過未輸出。`);
-      skipped++;
-      r++; continue;
+    if(hasCgssFlag){
+      const flag = cell(rows, r, T.CGSS_FLAG);
+      const alreadyDone = flag ? String(flag).trim().toLowerCase()==='v' : false;
+      if(alreadyDone){
+        warnings.push(`第${excelRow}列（序號 ${serial}）CGSS 欄已標記 v（視為已轉換過），已略過未輸出。`);
+        skipped++;
+        r++; continue;
+      }
     }
 
     const serialStr = String(serial).trim();
@@ -557,6 +565,17 @@ function runConversion(){
 
     warnings.push(`第${excelRow}列（序號 ${serial}）ApplyDate（*申請日期，必填）在 TEST.xlsx 中無對應欄位，已留白，請人工補齊。`);
 
+    let otherAgencies = [];
+    if(hasOtherAgencies){
+      const raw = cell(rows, r, T.OTHER_AGENCIES);
+      if(raw){
+        otherAgencies = String(raw).trim().split(/[、,，;；/]+/).map(s=>s.trim()).filter(Boolean);
+        if(otherAgencies.length){
+          warnings.push(`第${excelRow}列（序號 ${serial}）「其他補助單位」只有機關名稱、沒有金額，UnitName 已填入但 ExtAmount 留白，請人工補齊金額。`);
+        }
+      }
+    }
+
     outRows.push({
       customId: serialStr,
       fundYear,
@@ -567,6 +586,7 @@ function runConversion(){
       selfAmount: cell(rows,r,T.SELF),
       appliedAmount: cell(rows,r,T.APPLIED),
       confirmDate, confirmedAmount: confirmedAmt,
+      otherAgencies,
     });
     r++;
   }
@@ -614,6 +634,9 @@ function runConversion(){
     }
     if(row.confirmedAmount!==null && row.confirmedAmount!==''){
       arr[C.ConfirmedAmount]=row.confirmedAmount;
+    }
+    if(row.otherAgencies && row.otherAgencies.length && 'UnitName' in C){
+      arr[C.UnitName] = row.otherAgencies.join('；');
     }
     return arr;
   });

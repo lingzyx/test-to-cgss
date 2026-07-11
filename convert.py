@@ -44,8 +44,6 @@ CONFIG = {
     "FUND_NAME": "U200教育文化",            # *工作/業務計畫名稱
     "ORGANIZATION_TYPE": "扣繳編號(統一編號)",  # *民間團體類型
     "COUNTY_NAME": "南投縣",                # *民間團體所歸屬之地區
-    "FIRST_DATA_ROW": 11,                  # CGSS 範本資料從第幾列開始寫（找不到就用這個預設值）
-    "ONLY_ROWS_MARKED_CGSS": True,          # 是否只轉換 TEST 裡「CGSS」欄有標記 v 的列
 }
 
 # ------------------------------------------------------------
@@ -62,19 +60,26 @@ def _norm(s):
     return re.sub(r"[\s\u3000]+", "", str(s))
 
 
-# TEST.xlsx 欄位比對規則：(欄位代號, 必須包含的關鍵字, 不能包含的關鍵字, 是否必要)
+# TEST.xlsx 欄位比對規則：(欄位代號, [(必須包含的關鍵字, 不能包含的關鍵字), 其他寫法...], 是否必要)
+# 同一個欄位可以列出多種常見寫法，找到任一種就算比對成功。
 TEST_FIELD_RULES = [
-    ("SERIAL",        ["序號"],           [],         True),
-    ("ORG_NAME",      ["申請單位"],        [],         True),
-    ("ORG_ID",        ["統一編號"],        [],         True),
-    ("ACTIVITY_NAME", ["活動名稱"],        [],         True),
-    ("START",         ["活動時間", "起"],  [],         True),
-    ("END",           ["活動時間", "迄"],  [],         True),
-    ("SELF_FUND",     ["自有款"],          [],         True),
-    ("APPLIED_AMT",   ["補助金額"],        ["核定", "他機關"], True),   # 申請補助金額
-    ("CONFIRMED_AMT", ["補助金額"],        ["申請", "他機關"], True),   # 核定補助金額
-    ("CONFIRM_DATE",  ["核定日期"],        [],         True),
-    ("CGSS_FLAG",     ["CGSS"],           ["睦鄰"],    True),
+    ("SERIAL",        [(["序號"], [])],                          True),
+    ("ORG_NAME",      [(["申請單位"], [])],                       True),
+    ("ORG_ID",        [(["統一編號"], [])],                       True),
+    ("ACTIVITY_NAME", [(["活動名稱"], [])],                       True),
+    ("START",         [(["活動時間", "起"], [])],                 True),
+    ("END",           [(["活動時間", "迄"], [])],                 True),
+    ("SELF_FUND",     [(["自有款"], [])],                         True),
+    ("APPLIED_AMT",   [(["補助金額"], ["核定", "他機關"])],        True),   # 申請補助金額
+    ("CONFIRMED_AMT", [(["補助金額"], ["申請", "他機關"])],        True),   # 核定補助金額
+    ("CONFIRM_DATE",  [(["核定日期"], []), (["核准日期"], [])],    True),   # 兩種常見寫法都接受
+    # CGSS 欄不是每個年度的檔案都有，設為非必要。
+    # 這欄的意義是「已經轉過 CGSS 了」，所以標記 v 的列要跳過，
+    # 只轉換還沒標記 v 的列（如果整欄都不存在，就視為全部都還沒轉換）。
+    ("CGSS_FLAG",     [(["CGSS"], ["睦鄰"])],                     False),
+    # 「其他補助單位」是選用欄位：有的話會拿來填 CGSS 的 UnitName（可多筆），
+    # 但這欄通常只有機關名稱、沒有金額，ExtAmount 會留白。
+    ("OTHER_AGENCIES", [(["其他補助單位"], []), (["其他補助機關"], [])], False),
 ]
 
 
@@ -85,13 +90,16 @@ def build_test_column_map(ws, header_row=1):
 
     col_map = {}
     missing = []
-    for field, must_have, must_not_have, required in TEST_FIELD_RULES:
+    for field, alternatives, required in TEST_FIELD_RULES:
         found_col = None
-        for idx, h in enumerate(headers, start=1):
-            if not h:
-                continue
-            if all(k in h for k in must_have) and not any(k in h for k in must_not_have):
-                found_col = idx
+        for must_have, must_not_have in alternatives:
+            for idx, h in enumerate(headers, start=1):
+                if not h:
+                    continue
+                if all(k in h for k in must_have) and not any(k in h for k in must_not_have):
+                    found_col = idx
+                    break
+            if found_col is not None:
                 break
         if found_col is None:
             if required:
@@ -118,7 +126,12 @@ CGSS_REQUIRED_FIELDS = [
 
 def build_cgss_column_map(ws, max_scan_rows=15):
     """掃描 CGSS.xlsx 前面幾列，找出英文欄名所在的那一列，
-    並回傳 {欄名: 欄號} 對照表，以及那一列是第幾列（資料就接在它下面）。"""
+    並回傳 {欄名: 欄號} 對照表，以及那一列是第幾列（資料就接在它下面）。
+
+    注意：官方範本通常會把英文欄名列出現兩次
+    （一次在檔案上方作說明，一次緊接在資料正上方），
+    所以要取「掃描範圍內最後一次出現」的那一列，而不是第一次，
+    否則會把範本中間的操作說明文字誤判成資料起始列而覆蓋掉。"""
     header_row = None
     headers = None
     for r in range(1, max_scan_rows + 1):
@@ -126,7 +139,6 @@ def build_cgss_column_map(ws, max_scan_rows=15):
         if "Organization_Name" in row_vals:
             header_row = r
             headers = row_vals
-            break
 
     if header_row is None:
         raise ValueError("在 CGSS.xlsx 前 " + str(max_scan_rows) + " 列裡找不到英文欄名列（例如 Organization_Name），"
@@ -189,6 +201,9 @@ def convert(test_path, cgss_path, output_path):
     test_ws = test_wb.active
     T = build_test_column_map(test_ws)
 
+    has_cgss_flag = "CGSS_FLAG" in T
+    has_other_agencies = "OTHER_AGENCIES" in T
+
     rows_out = []
     r = 2
     while True:
@@ -204,12 +219,13 @@ def convert(test_path, cgss_path, output_path):
             r += 1
             continue
 
-        flag = test_ws.cell(row=r, column=T["CGSS_FLAG"]).value
-        flagged = str(flag).strip().lower() == "v" if flag else False
-        if CONFIG["ONLY_ROWS_MARKED_CGSS"] and not flagged:
-            warnings.append(f"第{r}列（序號 {serial}）CGSS 欄未標記 v，已略過未輸出。")
-            r += 1
-            continue
+        if has_cgss_flag:
+            flag = test_ws.cell(row=r, column=T["CGSS_FLAG"]).value
+            already_done = str(flag).strip().lower() == "v" if flag else False
+            if already_done:
+                warnings.append(f"第{r}列（序號 {serial}）CGSS 欄已標記 v（視為已轉換過），已略過未輸出。")
+                r += 1
+                continue
 
         fund_year_match = re.match(r"^(\d+)-", str(serial).strip())
         fund_year = fund_year_match.group(1) if fund_year_match else ""
@@ -236,6 +252,17 @@ def convert(test_path, cgss_path, output_path):
             f"第{r}列（序號 {serial}）ApplyDate（*申請日期，必填）在 TEST.xlsx 中無對應欄位，已留白，請人工補齊。"
         )
 
+        other_agencies = []
+        if has_other_agencies:
+            raw = test_ws.cell(row=r, column=T["OTHER_AGENCIES"]).value
+            if raw:
+                parts = re.split(r"[、,，;；/]+", str(raw).strip())
+                other_agencies = [p.strip() for p in parts if p.strip()]
+                warnings.append(
+                    f"第{r}列（序號 {serial}）「其他補助單位」只有機關名稱、沒有金額，"
+                    f"UnitName 已填入但 ExtAmount 留白，請人工補齊金額。"
+                )
+
         rows_out.append({
             "custom_id": str(serial).strip(),
             "apply_date": None,  # 無法從來源判斷，見上方 warnings
@@ -253,6 +280,7 @@ def convert(test_path, cgss_path, output_path):
             "applied_amount": test_ws.cell(row=r, column=T["APPLIED_AMT"]).value,
             "confirm_date": confirm_date,
             "confirmed_amount": confirmed_amt,
+            "other_agencies": other_agencies,
         })
         r += 1
 
@@ -289,6 +317,8 @@ def convert(test_path, cgss_path, output_path):
             cgss_ws.cell(row=rr, column=C["ConfirmFund_Year"], value=row["fund_year"])
         if row["confirmed_amount"] not in (None, ""):
             cgss_ws.cell(row=rr, column=C["ConfirmedAmount"], value=row["confirmed_amount"])
+        if row.get("other_agencies") and "UnitName" in C:
+            cgss_ws.cell(row=rr, column=C["UnitName"], value="；".join(row["other_agencies"]))
 
     cgss_wb.save(output_path)
 
